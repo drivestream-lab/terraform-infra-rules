@@ -8,13 +8,12 @@ Rules describe **how to build infra**. They do **not** contain client topology,
 environment values, or resource catalogs — those live in each consumer repo under
 `docs/specification/` and `envs/*/terraform.tfvars`.
 
-|                     |                                                              |
-| ------------------- | ------------------------------------------------------------ |
-| **License**         | [MIT](LICENSE)                                               |
-| **Version**         | see `VERSION` (currently **0.1.1**) · [CHANGELOG](CHANGELOG.md) |
-| **Harness profile** | `terraform-infra`                                            |
-| **Mount path**      | `.cursor/rules/` (git submodule)                             |
-| **Pairs with**      | terraform-aws-foundation · terraform-azure-foundation · terraform-{aws,azure}-modules · IaC skills |
+| | |
+|---|---|
+| **License** | [MIT](LICENSE) |
+| **Version** | see [`VERSION`](VERSION) (currently **0.1.2**) · [CHANGELOG](CHANGELOG.md) |
+| **Mount path** | `.cursor/rules/` (git submodule) |
+| **Scaffold** | `terraform-azure-foundation` — optional cookiecutter in your org |
 
 ---
 
@@ -45,66 +44,129 @@ is an outage or a bill, not tech debt.
 
 Repository root **is** the contents of a consumer's `.cursor/rules/`:
 
-```
+```text
 terraform-infra-rules/
-  VERSION  README.md  CHANGELOG.md
+  VERSION
+  README.md
+  CHANGELOG.md
   infra-guidelines-index.mdc     ← module index (start here)
-  spec-driven-infra.mdc          plan-apply-workflow.mdc
-  stack-architecture.mdc         module-structure.mdc
-  variables-outputs.mdc          naming-tagging.mdc
-  state-and-backends.mdc         provider-versioning.mdc
-  environments-and-promotion.mdc deployment-flavors.mdc
-  security-baseline.mdc          testing-verification.mdc
-  policy-as-code.mdc             infra-adr.mdc
+  spec-driven-infra.mdc
+  plan-apply-workflow.mdc
+  stack-architecture.mdc
+  module-structure.mdc
+  variables-outputs.mdc
+  naming-tagging.mdc
+  state-and-backends.mdc
+  provider-versioning.mdc
+  environments-and-promotion.mdc
+  deployment-flavors.mdc
+  security-baseline.mdc
+  testing-verification.mdc
+  policy-as-code.mdc
+  infra-adr.mdc
   aws.mdc  azure.mdc             ← cloud overlays (scoped)
   policies/                      ← rego mirrors (gate 6; versioned with rules)
+  …
 ```
+
+Full module table: [`infra-guidelines-index.mdc`](infra-guidelines-index.mdc).
+
+---
 
 ## Adoption
 
-From the consumer stack repo root:
+From the **consumer stack repo root**:
 
 ```bash
+rm -rf .cursor/rules
+
 git submodule add https://github.com/<org>/terraform-infra-rules.git .cursor/rules
-cd .cursor/rules && git checkout v0.1.1 && cd ../..
+cd .cursor/rules && git checkout v0.1.2 && cd ../..
+
 git add .gitmodules .cursor/rules
+git commit -m "Add Terraform infra Cursor rules at .cursor/rules (v0.1.2)"
 ```
 
-Foundations generate stack shape only; pin the rules submodule manually or via
-launchpad `apply-harness` when using the harness.
+Cursor loads **`.cursor/rules/*.mdc`** automatically — no copy step.
+
+Greenfield stacks may start from `terraform-azure-foundation` in your org
+(`cookiecutter … --checkout v0.1.1`), then add the rules submodule as above.
+
+---
 
 ## Tooling expected by the rules
 
-Consumer repos need: `terraform` (≥1.9), `tflint`, `trivy` (or `checkov`),
-`conftest`. Required Makefile targets — `check`, `test`, `plan` — are specified in
-`testing-verification.mdc`.
+Consumer repos need: **Terraform** (≥1.9), **tflint**, **trivy** (or **checkov**),
+**conftest**. Required Makefile targets — `check`, `test`, `plan` — are specified in
+`testing-verification.mdc`. Exact config files live in the consumer repo or
+scaffold — not in this constitution.
+
+---
+
+## Bump rules version
+
+```bash
+cd .cursor/rules
+git fetch --tags
+git checkout v0.1.2    # target version
+cd ../..
+git add .cursor/rules
+git commit -m "Bump Terraform infra rules to v0.1.2"
+```
+
+Read [CHANGELOG](CHANGELOG.md) before every bump. **Breaking** releases require
+consumer code changes before or alongside the submodule pointer update. Policy
+tightening that can fail previously-green repos is a **MAJOR** bump.
+
+---
 
 ## Governance
 
 | Principle | Detail |
-| --- | --- |
-| **Ownership** | Platform / architecture team |
+|-----------|--------|
+| **Ownership** | Platform / architecture team owns this repo |
 | **Consumers** | Pin a release tag — never fork or edit rules in stack repos |
-| **Changes** | PR here → semver tag → bump approved pairs in tenant config |
-| **Policy = rules** | Rego ships here, versioned with the prose it enforces; tightening a policy is a MAJOR |
+| **Changes** | Propose via PR here; consumers update the submodule pointer only |
+| **Policy = rules** | Rego ships here, versioned with the prose it enforces |
 | **Client truth** | Topology → tfvars · rationale → ADRs · live state → as-built — all in the consumer repo |
+| **Do not** | `gitignore` `.cursor/rules` in consumers — breaks the pinned submodule |
+
+---
 
 ## What stays in each stack repo
 
 | Path | Purpose |
-| --- | --- |
+|------|---------|
 | `docs/specification/product/` | Infra spec: components, per-env matrix, SLOs, cost ceiling |
 | `docs/specification/adr/` | Why it runs the way it runs (ADR-0001 = environment topology) |
 | `docs/specification/as-built/` | What is live today |
 | `envs/*/terraform.tfvars` | The machine-readable per-env decisions |
-| `AGENTS.md` | Agent router and harness pin |
+| `README.md` | Setup, backends, plan/apply runbook |
+
+---
 
 ## Release process (maintainers)
 
-1. Branch `rules/<short-description>`; peer review required
+1. Branch `rules/<short-description>` — edit `*.mdc` at repo root; peer review required
 2. Machine-checkable rule changes include their rego mirror in the same PR
-3. Bump `VERSION` (tightened policy or breaking consumer change = MAJOR)
-4. Update README + CHANGELOG → PR → tag `vX.Y.Z` → update tenant approved pairs
+3. Bump **`VERSION`** (semver) and **`CHANGELOG.md`** (tightened policy = MAJOR)
+4. Update version in this README header
+5. PR → `develop` → `main`; tag and push:
+
+```bash
+git tag v0.1.2
+git push origin v0.1.2
+```
+
+---
+
+## Related repositories
+
+| Repo | Role |
+|------|------|
+| `terraform-azure-foundation` | Cookiecutter scaffold for Azure infra stacks |
+| `python-services-rules` | Constitution for application services this stack hosts |
+| `nextjs-bff-rules` | Constitution for BFF portals that call those services |
 
 ---
 

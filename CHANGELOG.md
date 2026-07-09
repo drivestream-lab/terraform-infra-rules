@@ -4,6 +4,15 @@ All notable changes to terraform-infra-rules. Semver: PATCH = clarification,
 MINOR = new guidance (additive), MAJOR = breaking for consumers (including any
 policy tightening that can fail previously-green repos).
 
+## [0.1.2] — 2026-07-09
+
+### Changed
+- **`README.md`** — remove harness profile, launchpad adoption path, `AGENTS.md` row, tenant config refs; use `<org>` in submodule commands; point to `terraform-azure-foundation` scaffold
+
+### Migration guide
+- Optional submodule bump: `git checkout v0.1.2` in `.cursor/rules`
+- No consumer Terraform changes required
+
 ## [0.1.1] — 2026-07-09
 
 ### Changed
