@@ -10,6 +10,7 @@ environment values, or resource catalogs — those live in each consumer repo un
 
 |                     |                                                              |
 | ------------------- | ------------------------------------------------------------ |
+| **License**         | [MIT](LICENSE)                                               |
 | **Version**         | see `VERSION` (currently **0.1.1**) · [CHANGELOG](CHANGELOG.md) |
 | **Harness profile** | `terraform-infra`                                            |
 | **Mount path**      | `.cursor/rules/` (git submodule)                             |
@@ -104,3 +105,9 @@ Consumer repos need: `terraform` (≥1.9), `tflint`, `trivy` (or `checkov`),
 2. Machine-checkable rule changes include their rego mirror in the same PR
 3. Bump `VERSION` (tightened policy or breaking consumer change = MAJOR)
 4. Update README + CHANGELOG → PR → tag `vX.Y.Z` → update tenant approved pairs
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE).
