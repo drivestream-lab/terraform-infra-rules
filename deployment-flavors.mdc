@@ -1,0 +1,74 @@
+---
+description: The flavor/size_profile contract — how one component runs as k8s, VM, or managed service at different sizes per environment.
+globs: modules/**/*.tf,envs/**/*.tfvars
+alwaysApply: false
+---
+
+# Deployment Flavors
+
+**Rationale:** cost and blast radius are code properties. "Kafka small on AKS in
+stage, Kafka large on VMs in prod" must be a *data* difference (tfvars) against one
+tested module — not two modules, and never a hand-edited fork.
+
+## The contract
+
+Every component module that supports multiple delivery modes exposes exactly:
+
+```hcl
+variable "flavor" {
+  type        = string
+  description = "Delivery mode for this component."
+  validation {
+    condition     = contains(["k8s", "vm", "managed"], var.flavor)
+    error_message = "flavor must be one of: k8s, vm, managed."
+  }
+}
+
+variable "size_profile" {
+  type        = string
+  description = "T-shirt size, resolved to concrete SKUs inside the module."
+  validation {
+    condition     = contains(["s", "m", "l", "xl"], var.size_profile)
+    error_message = "size_profile must be one of: s, m, l, xl."
+  }
+}
+```
+
+Not every module supports every flavor — a module documents its supported set in
+its README and rejects others via validation.
+
+## Rules
+
+1. **Size maps live inside the module**, per flavor. Callers say `l`; the module
+   knows what `l` means. This is the single place a size definition can change,
+   and changing it is a version bump + CHANGELOG entry:
+
+```hcl
+locals {
+  vm_sizes = {
+    s  = { sku = "Standard_D2s_v5",  disk_gb = 128,  count = 1 }
+    m  = { sku = "Standard_D4s_v5",  disk_gb = 256,  count = 3 }
+    l  = { sku = "Standard_D8s_v5",  disk_gb = 512,  count = 3 }
+    xl = { sku = "Standard_D16s_v5", disk_gb = 1024, count = 5 }
+  }
+}
+```
+
+2. **Callers never pass raw SKUs.** A tfvars line with `Standard_D8s_v5` in it
+   bypasses the contract — rejected by policy gate. If a client genuinely needs a
+   non-standard shape, that's a new profile in the module (ADR + module PR), not
+   an escape hatch.
+3. **Changing a component's flavor or size in any env is an ADR trigger**
+   (`infra-adr.mdc`): cost delta, migration path (flavor changes usually mean data
+   migration, not in-place update), and rollback story.
+4. **Flavor changes are migrations, not updates.** The module must be honest about
+   this: switching `flavor` will plan destroy/create. The ADR carries the data
+   migration plan; the plan review (`plan-apply-workflow.mdc`) stop-line applies.
+5. Implement flavors as submodules selected by the parent, so each flavor is
+   independently testable:
+
+```
+modules/kafka/
+  main.tf            # dispatch on var.flavor
+  k8s/  vm/  managed/
+```

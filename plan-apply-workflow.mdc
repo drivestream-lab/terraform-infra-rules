@@ -1,0 +1,48 @@
+---
+description: The apply safety contract. Agents and developers stop at plan; apply/destroy happen only through gated CI.
+alwaysApply: true
+---
+
+# Plan / Apply Workflow
+
+**Rationale (IaC failure mode):** execution mutates the real world. A wrong `apply`
+deletes data; `git revert` does not restore infrastructure. Retrying on failure —
+the default behavior of both humans under pressure and agents — makes it worse.
+
+## Hard rules
+
+1. **Never run** `terraform apply`, `terraform destroy`, `terraform import`,
+   `terraform state mv|rm|push`, or `terraform taint`. Not in a sandbox "just to check".
+   Your deliverable is a clean plan, not applied infrastructure.
+2. **Apply happens only in CI**, on a merged PR, with a human approval step between
+   plan and apply. The plan CI applies must be the saved plan file from the PR
+   (`terraform apply plan.tfplan`), never a fresh plan — the diff reviewed is the diff applied.
+3. **`-target` is forbidden** in normal work. It creates partial states that make the
+   next full plan lie. Break-glass use requires an incident reference in the PR.
+4. **Stateful resources carry destroy protection:**
+
+```hcl
+resource "azurerm_postgresql_flexible_server" "this" {
+  # ...
+  lifecycle {
+    prevent_destroy = true   # databases, storage, message logs — anything with data
+  }
+}
+```
+
+Removing a `prevent_destroy` is itself an ADR trigger (`infra-adr.mdc`).
+
+5. **A plan that shows `destroy` or `replace` on a stateful resource is a stop-line.**
+   Do not proceed to PR without flagging it explicitly in the PR description with the
+   reason (e.g. a forced replacement from an immutable attribute change) and the
+   data-migration story.
+
+## Plan output discipline
+
+- Generate machine-readable plans for review: `terraform plan -out=plan.tfplan &&
+  terraform show -json plan.tfplan > plan.json`
+- Summarize every plan in the PR: adds / changes / destroys, per resource type,
+  with any replacement called out and traced to the spec component that requires it.
+- `make plan` must run against the target env's backend in **read/plan-only**
+  credentials. Plan credentials cannot have write permissions — enforce at the
+  identity level, not by convention.

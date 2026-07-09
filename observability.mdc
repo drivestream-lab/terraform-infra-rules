@@ -1,0 +1,47 @@
+---
+description: Cloud-neutral observability baseline — diagnostic routing, retention policy by environment tier, network flow visibility. Applies to every resource in every environment.
+globs: **/*.tf
+alwaysApply: false
+---
+
+# Observability Baseline
+
+**Rationale:** an incident nobody can see is an incident nobody can fix. Logging
+existence is not optional anywhere; only its retention length is a cost dial.
+Cloud-specific product names (log workspace, archive storage) live in the matching
+overlay (`azure.mdc`, `aws.mdc`).
+
+## Diagnostic routing
+
+1. Every resource capable of emitting diagnostic/audit logs routes them to the
+   environment's central log workspace. A resource with diagnostics available but
+   not wired is a gap to close, not a backlog item.
+2. Routing is unconditional; **retention length is the only tunable dial**, and it
+   is set per environment, not per resource:
+
+```hcl
+variable "log_retention_days" {
+  type        = number
+  description = "Log workspace retention. No module default — supplied per env."
+  # dev/stage/uat = 2, prod = 7, per environments-and-promotion.mdc
+}
+```
+
+3. `log_retention_days` has **no in-module default** — every environment's
+   `terraform.tfvars` states its value explicitly. This keeps the number
+   grep-able per env and stops a module update from silently changing prod
+   retention (`variables-outputs.mdc` §"no defaults for env-specific values").
+
+## Network flow visibility
+
+4. Network-level flow logs (e.g. NSG flow logs, VPC flow logs) are enabled by
+   default and route to a **dedicated diagnostics-only object storage target** —
+   never a bucket/account that also holds product or application data. Mixing the
+   two defeats the blast-radius separation this scaffold exists to enforce.
+
+## Enforcement
+
+No rego policy exists yet for rule 1 (unwired diagnostics) or rule 4's isolation
+requirement (shared diagnostics/product storage target) — both are plan-review
+only today. Rule 3 (no in-module retention default) is checkable via
+`terraform test` on the module itself.

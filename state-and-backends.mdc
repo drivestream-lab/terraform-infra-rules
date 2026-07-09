@@ -1,0 +1,53 @@
+---
+description: State isolation, locking, encryption, and cross-stack references.
+globs: **/backend.tf,**/*.tf
+alwaysApply: false
+---
+
+# State & Backends
+
+**Rationale:** the state file is shared mutable runtime — the single most dangerous
+artifact in IaC. Two concurrent writers corrupt it; a hand edit desyncs code from
+reality permanently; its contents include secrets whether you like it or not.
+
+## Rules
+
+1. **Remote backend always.** No local state beyond first-minute experiments.
+   Backend must provide locking and encryption at rest (S3 + lockfile/DynamoDB,
+   azurerm storage with blob lease — see cloud overlays).
+2. **One state per environment per stack.** Never one state spanning environments;
+   never `terraform workspace` as the env mechanism (invisible in review, shared
+   backend credentials across envs).
+3. **State is a secret.** Backend storage gets the same access control as a
+   password vault: no public access, no broad read grants, audit logging on.
+   Provider resources write credentials into state regardless of your code.
+4. **Never hand-edit state, never `state push`.** Refactors use `moved` blocks
+   (`module-structure.mdc`); genuine imports use `import` blocks in code, reviewed
+   in a PR, so the operation is declarative and visible:
+
+```hcl
+import {
+  to = module.network.azurerm_virtual_network.this
+  id = "/subscriptions/.../virtualNetworks/ds-acme-prod-vnet"
+}
+```
+
+5. **Cross-stack reads are explicit and one-directional.** Workload stacks may read
+   foundation stack outputs; never sideways or upward. Prefer provider data sources
+   looking up by name/tag over `terraform_remote_state` — data sources survive the
+   producer's refactors; remote-state reads couple to its internal layout.
+
+```hcl
+# PREFERRED — lookup by contract (name), not by state internals
+data "azurerm_virtual_network" "core" {
+  name                = "ds-acme-${var.environment}-vnet"
+  resource_group_name = "ds-acme-${var.environment}-network"
+}
+```
+
+6. **Backend config is per-env and committed** (`envs/<env>/backend.tf`). No
+   `-backend-config` flags assembled by hand — reproducibility over flexibility.
+7. Drift between state and reality is investigated, not overwritten. `-refresh-only`
+   plan first, understand who changed what (check `managed_by` tags), then decide:
+   adopt (import) or revert (plan/apply through CI). Never blind `apply` to
+   "make the error go away".

@@ -1,0 +1,52 @@
+---
+description: Layering of a Terraform stack repo — thin env roots, stacks, modules; dependency direction and state boundaries.
+globs: **/*.tf
+alwaysApply: false
+---
+
+# Stack Architecture
+
+**Rationale:** uniform shape makes generation and review predictable; resources
+scattered in roots make state boundaries accidental instead of designed.
+
+## Layers
+
+```
+envs/<env>/            ← roots: backend + provider + module calls + tfvars. NOTHING else
+  main.tf              ← composes stacks/modules; no resource blocks
+  backend.tf           ← env-specific backend config
+  terraform.tfvars     ← the per-env decision data (flavor, size, counts)
+modules/               ← local modules (promoted to the shared modules repo when reused)
+```
+
+Dependency direction: `envs → modules → providers`. Never the reverse; modules never
+reference `envs/` paths or read tfvars files.
+
+## Rules
+
+1. **No `resource` blocks in env roots.** Roots compose; modules implement.
+
+```hcl
+# CORRECT — envs/prod/main.tf
+module "kafka" {
+  source       = "git::https://github.com/<org>/terraform-azure-modules.git//kafka?ref=v1.4.0"
+  flavor       = var.kafka.flavor
+  size_profile = var.kafka.size
+  tags         = local.tags
+}
+
+# INCORRECT — resource in a root
+resource "azurerm_kubernetes_cluster" "kafka" { ... }
+```
+
+2. **One root per environment.** No `count`/`for_each` over environments, no
+   `terraform workspace` for env separation — workspaces share a backend and make
+   the active env invisible in code review.
+3. **Split state along blast-radius lines.** Long-lived/low-churn (network, DNS,
+   registry) in a separate stack from high-churn workloads. A team touching an app
+   stack must not be able to corrupt network state.
+4. **Cross-stack dependencies flow one direction** (foundation → workload), read via
+   explicit outputs (`state-and-backends.mdc`). Circular stack references indicate a
+   wrong split — merge or re-cut the stacks.
+5. Environment differences live in `terraform.tfvars` only. `count = var.env == "prod" ? 1 : 0`
+   in module code is an environment fork — rejected in review. See `environments-and-promotion.mdc`.

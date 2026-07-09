@@ -1,0 +1,67 @@
+---
+description: Variable typing, validation, defaults policy, and output contracts.
+globs: **/variables.tf,**/outputs.tf,**/*.tfvars
+alwaysApply: false
+---
+
+# Variables & Outputs
+
+**Rationale:** the plan is the only test surface; `validation` blocks are the one
+mechanism that fails *before* anything reaches the cloud. Untyped variables defer
+errors to apply time — the most expensive place to find them.
+
+## Variables
+
+1. **Every variable has `type` and `description`.** `any` is forbidden.
+2. **Constrain values with `validation` blocks** wherever the domain is known:
+
+```hcl
+variable "size_profile" {
+  type        = string
+  description = "T-shirt size; mapped to concrete SKUs inside the module."
+  validation {
+    condition     = contains(["s", "m", "l", "xl"], var.size_profile)
+    error_message = "size_profile must be one of: s, m, l, xl."
+  }
+}
+```
+
+3. **No defaults for environment-specific values.** A default SKU, CIDR, or count is
+   a hidden environment decision. Defaults are allowed only for genuine invariants
+   (e.g. `tls_min_version = "1.2"`).
+
+```hcl
+# INCORRECT — env decision hiding as a default
+variable "node_count" { type = number, default = 3 }
+
+# CORRECT — force the env to decide, validate the domain
+variable "node_count" {
+  type        = number
+  description = "Worker node count; set per environment in tfvars."
+  validation {
+    condition     = var.node_count >= 1 && var.node_count <= 50
+    error_message = "node_count must be between 1 and 50."
+  }
+}
+```
+
+4. **Use `object` types with `optional()`** for component configs so tfvars stay
+   readable; avoid parallel loose variables that must be kept consistent by hand.
+5. **Mark secrets `sensitive = true`** — but prefer not passing secrets at all
+   (`security-baseline.mdc`): pass a vault/key-vault *reference*, not the value.
+
+## Outputs
+
+6. **Outputs are a contract.** Export only what consumers need (ids, endpoints,
+   identity principal ids) — not whole resource objects. Every output has a
+   `description`. Removing or renaming an output is a breaking change → major
+   version bump of the module.
+7. **Never output secret material.** Connection strings with embedded passwords,
+   access keys, kubeconfigs — these land in state and CI logs. Output the vault
+   reference instead.
+
+## tfvars
+
+8. `terraform.tfvars` contains **values only** — no logic, no duplication of
+   defaults just to restate them. Every value in tfvars should trace to a spec
+   line or an ADR.

@@ -1,0 +1,44 @@
+---
+description: Index of all Terraform infrastructure rules. Load first to know which rules apply to the task at hand.
+alwaysApply: true
+---
+
+# Infrastructure Guidelines Index
+
+Constitution for Terraform-based infrastructure. Rules describe **how to build infra**.
+They never contain client topology, environment values, or product requirements —
+those live in each consumer repo under `docs/specification/` and `envs/*/terraform.tfvars`.
+
+## Rule modules
+
+| Rule | Applies when | Summary |
+|---|---|---|
+| `spec-driven-infra.mdc` | Starting any infra work | Spec → ADR → code → plan workflow; where truth lives |
+| `stack-architecture.mdc` | Any `.tf` change | Layering: envs → stacks → modules; thin roots |
+| `module-structure.mdc` | Writing/editing modules | Module anatomy, composition, refactoring with `moved` |
+| `variables-outputs.mdc` | Any `variables.tf` / `outputs.tf` | Types, validation, output contracts |
+| `naming-tagging.mdc` | Any resource creation | Naming scheme, mandatory tags |
+| `state-and-backends.mdc` | Backend config, state operations | State isolation, locking, cross-stack reads |
+| `provider-versioning.mdc` | `versions.tf`, lock files | Pinning strategy, upgrade discipline |
+| `environments-and-promotion.mdc` | Multi-env work | Parity model, promotion order |
+| `deployment-flavors.mdc` | Component modules | flavor/size_profile contract |
+| `security-baseline.mdc` | Any resource creation | Non-negotiable security defaults |
+| `kubernetes.mdc` | Any k8s flavor or managed cluster module | Cloud-neutral pod identity, secrets injection, network policy, cluster access |
+| `observability.mdc` | Any resource creation | Diagnostic routing baseline, retention-by-env-tier policy, flow-log isolation |
+| `secret-management.mdc` | Any workload consuming a secret | Cloud-neutral secret storage/consumption/rotation pattern |
+| `plan-apply-workflow.mdc` | Always | Agents stop at plan; apply is gated CI |
+| `testing-verification.mdc` | Before any PR | Gate ladder: fmt → validate → lint → policy → test → plan |
+| `policy-as-code.mdc` | Editing `policies/` | Rego mirrors of these rules |
+| `infra-adr.mdc` | Decisions with alternatives | What requires an ADR, ADR/tfvars same-PR rule |
+| `aws.mdc` | AWS provider in use | AWS-specific idioms |
+| `azure.mdc` | azurerm provider in use | Azure-specific idioms |
+
+## Hard rules (apply everywhere, no exceptions)
+
+1. **Never run `terraform apply`, `terraform destroy`, or any state-mutating command.**
+   Your job ends at a clean plan. See `plan-apply-workflow.mdc`.
+2. **Never edit `.cursor/rules/` in a consumer repo.** Propose changes via PR on this repo.
+3. **Environment differences are data (tfvars), never code branches.**
+4. **Decisions with alternatives require an ADR in the same PR.** See `infra-adr.mdc`.
+5. **Secrets never appear in `.tf`, `.tfvars`, or state by design.** See `security-baseline.mdc`.
+6. **Do not** add client topology, harness content, or agent routers to **`.mdc`** files.

@@ -1,0 +1,64 @@
+---
+description: The verification gate ladder — fmt, validate, lint, policy, terraform test, plan review — and required Makefile targets.
+alwaysApply: true
+---
+
+# Testing & Verification
+
+**Rationale:** infrastructure has no unit-testable runtime; the plan is the test
+surface. The gate ladder orders checks from cheapest to most expensive so failures
+surface early and every gate is deterministic.
+
+## Gate ladder
+
+| Gate | Command | Catches | Needs cloud? |
+|---|---|---|---|
+| 1 Format | `terraform fmt -check -recursive` | Style drift | No |
+| 2 Validate | `terraform validate` (per root, `-backend=false`) | Type errors, bad references | No |
+| 3 Lint | `tflint --recursive` | Deprecated syntax, provider misuse, unused declarations | No |
+| 4 Security scan | `trivy config .` (or checkov) | Known misconfiguration patterns | No |
+| 5 Unit test | `terraform test` with provider `mock_provider` | Module logic: size maps, flavor dispatch, validation | No |
+| 6 Policy | `conftest test plan.json -p policies/` | Constitution violations on the actual diff | Plan only |
+| 7 Plan review | human + `review-plan` skill on plan JSON | Everything else: replacements, spec drift | Plan only |
+
+Gates 1–5 run on every commit; 6–7 on every PR. **Nothing beyond plan runs outside CI.**
+
+## Makefile contract (every consumer repo)
+
+Every stack repo must provide a root **`Makefile`** with these targets:
+
+| Target | Purpose |
+|--------|---------|
+| `setup` | One-time tool verification (`terraform` required; `tflint`, `trivy`, `conftest` noted if missing) |
+| `check` | Offline gates 1–4: fmt, validate, lint, scan — no cloud credentials |
+| `test` | Gate 5: `terraform test` on module `tests/` directories |
+| `plan` | Gates 6–7 input: init + plan per `ENV`, emit `plan.json`, run conftest when policies exist |
+
+Use `ENV=<env>` (default `dev`) for `preflight` and `plan`. Exact implementation
+lives in the consumer repo — not in this constitution.
+
+`make check` green is the precondition for opening a PR.
+
+## terraform test rules
+
+1. Every shared module ships `tests/*.tftest.hcl` covering: each supported flavor
+   plans successfully; each size profile resolves; invalid inputs fail validation.
+
+```hcl
+# modules/<component>/tests/flavors.tftest.hcl
+mock_provider "azurerm" {}
+
+run "managed_flavor_plans" {
+  command = plan
+  variables { flavor = "managed", size_profile = "m" }
+  assert {
+    condition     = length(azurerm_postgresql_flexible_server.this) > 0
+    error_message = "managed flavor must create the flexible server resource"
+  }
+}
+```
+
+2. Mocked tests verify **logic**, not cloud behavior. Live verification against a
+   sandbox subscription/account is a separate, manually-triggered flow
+   (`tests/verify/`) — never in CI, never against shared envs.
+3. A module PR that changes behavior without touching its tests is incomplete.

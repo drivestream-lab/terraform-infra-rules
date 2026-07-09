@@ -1,0 +1,45 @@
+---
+description: Terraform and provider version pinning, lock files, and upgrade discipline.
+globs: **/versions.tf,**/.terraform.lock.hcl
+alwaysApply: false
+---
+
+# Provider & Version Pinning
+
+**Rationale:** providers are external versioned APIs. The same `.tf` code under a
+different provider version can plan different infrastructure — including forced
+replacements. Unpinned versions make plans non-reproducible between a PR and its apply.
+
+## Rules
+
+1. **Pin the Terraform core version** with a pessimistic constraint in every root:
+
+```hcl
+terraform {
+  required_version = "~> 1.9.0"   # roots: exact minor
+}
+```
+
+Modules use a floor (`>= 1.7`) — modules state what they need; roots decide what runs.
+
+2. **Pin providers `~>` minor in roots, floor in modules:**
+
+```hcl
+# root
+azurerm = { source = "hashicorp/azurerm", version = "~> 4.14" }
+# module
+azurerm = { source = "hashicorp/azurerm", version = ">= 4.0" }
+```
+
+3. **Commit `.terraform.lock.hcl` in every root.** The lock file — not the
+   constraint — is what makes CI and laptops resolve identical provider builds.
+   Include all platforms used: `terraform providers lock -platform=linux_amd64
+   -platform=darwin_arm64`.
+4. **Upgrades are deliberate PRs**, one provider at a time: bump constraint →
+   `terraform init -upgrade` → read the provider CHANGELOG for the range → run the
+   full gate ladder → review the plan for unexpected diffs (an upgrade PR should
+   plan **zero changes**; anything else is a finding to explain in the PR).
+5. **Major provider upgrades are ADR triggers** — they routinely rename arguments
+   and force resource replacements; the migration path must be recorded.
+6. No `latest`, no unconstrained `source`, no providers outside the org's approved
+   registry namespaces without review.

@@ -1,0 +1,84 @@
+---
+description: AWS-specific idioms — identity, backend, naming constraints, tagging mechanics. Active only when the aws provider is in use.
+globs: **/*.tf
+alwaysApply: false
+---
+
+# AWS Overlay
+
+Applies **in addition to** all core rules when the `aws` provider is in use.
+These are platform facts and org idioms — decisions live in ADRs, not here.
+
+## Identity
+
+1. CI authenticates via **IAM OIDC federation** (GitHub Actions → role assumption).
+   No `AWS_ACCESS_KEY_ID` in CI secrets. Two roles per env: `plan` (ReadOnly +
+   state read) and `apply` (scoped write), per `plan-apply-workflow.mdc`.
+2. Workloads use IAM roles (instance profiles, IRSA on EKS). `aws_iam_access_key`
+   resources for humans/services fail the policy gate.
+3. IAM policies are authored with `data "aws_iam_policy_document"` — never
+   heredoc JSON (no validation, no reference checking).
+
+## State backend
+
+4. S3 backend with locking and encryption:
+
+```hcl
+terraform {
+  backend "s3" {
+    bucket       = "ds-<org>-tfstate-<env>"
+    key          = "<stack>/terraform.tfstate"
+    region       = "eu-central-1"
+    encrypt      = true
+    use_lockfile = true   # S3-native locking (TF ≥ 1.10); else dynamodb_table
+  }
+}
+```
+
+State buckets: versioning on, public access blocked, bucket policy restricted to
+the two CI roles + break-glass.
+
+## Naming constraints (module-internal normalization)
+
+5. S3 bucket names are **globally unique**, ≤63 chars, lowercase, no underscores —
+   modules append `data.aws_caller_identity.current.account_id` to avoid squatting
+   collisions.
+6. IAM names ≤64 chars; ALB/target group names ≤32 — modules truncate with a hash
+   suffix, deterministically.
+
+## Tagging mechanics
+
+7. Apply mandatory tags once, via provider `default_tags`:
+
+```hcl
+provider "aws" {
+  region = var.region
+  default_tags { tags = local.tags }
+}
+```
+
+Per-resource `tags` are for additive, resource-specific tags only. Note:
+resources that don't support `default_tags` (older aws provider quirks) must tag
+explicitly — the policy gate catches misses.
+
+## Service idioms
+
+8. "managed" flavor equivalence: postgres → RDS/Aurora, redis → ElastiCache,
+   kafka → MSK, object storage → S3, k8s → EKS.
+9. Everything regional lives in the region declared by the env root; multi-region
+   is an ADR, not a variable someone flips.
+
+## Kubernetes & secrets overlay
+
+10. Kubernetes cluster = **EKS**. Pod identity federation (`kubernetes.mdc` §1-2)
+    = **IRSA** (IAM Roles for Service Accounts) or **EKS Pod Identity** on newer
+    clusters — pick one per cluster, don't mix within a stack.
+11. Secrets Store CSI Driver provider (`secret-management.mdc` §2) = **AWS
+    provider for Secrets Store CSI Driver**, backed by **Secrets Manager**
+    (or SSM Parameter Store for non-sensitive config).
+12. Cluster access (`kubernetes.mdc` §6) = **EKS access entries** mapped to IAM
+    roles — no `aws-auth` ConfigMap edits, no local `kubectl` users.
+13. Log workspace (`observability.mdc` §1) = **CloudWatch Logs** (log groups).
+    Diagnostics-only flow-log storage target (`observability.mdc` §4) = an
+    **S3 bucket** provisioned solely for this purpose, lifecycle-managed, never
+    shared with product data.

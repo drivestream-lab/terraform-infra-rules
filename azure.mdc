@@ -1,0 +1,91 @@
+---
+description: Azure-specific idioms — identity, backend, naming constraints, resource groups. Active only when the azurerm provider is in use.
+globs: **/*.tf
+alwaysApply: false
+---
+
+# Azure Overlay
+
+Applies **in addition to** all core rules when the `azurerm` provider is in use.
+These are platform facts and org idioms — decisions live in ADRs, not here.
+
+## Identity
+
+1. CI authenticates via **workload identity federation** (GitHub Actions OIDC →
+   Entra app). No client secrets in CI. Two service principals per env: `plan`
+   (Reader + state read) and `apply` (scoped Contributor), per `plan-apply-workflow.mdc`.
+2. Workloads use **managed identities** — system-assigned by default,
+   user-assigned when the identity must survive resource recreation. Service
+   principals with client secrets fail the policy gate.
+3. Data-plane access via **Azure RBAC**, not access keys:
+   `shared_access_key_enabled = false` on storage accounts wherever workloads
+   support it; Key Vault with `enable_rbac_authorization = true`.
+
+## Provider & backend
+
+4. Every root's azurerm provider declares `features {}` (mandatory even when
+   empty) and pins `subscription_id` explicitly — never inherited from the
+   ambient CLI login:
+
+```hcl
+provider "azurerm" {
+  features {}
+  subscription_id = var.subscription_id
+}
+```
+
+5. azurerm backend with blob-lease locking (built in):
+
+```hcl
+terraform {
+  backend "azurerm" {
+    resource_group_name  = "ds-<org>-tfstate"
+    storage_account_name = "ds<org>tfstate<env>"   # ≤24 chars, no hyphens!
+    container_name       = "tfstate"
+    key                  = "<stack>.tfstate"
+    use_azuread_auth     = true                     # RBAC, not access keys
+  }
+}
+```
+
+State storage account: versioning + soft delete on, public network access off.
+
+## Naming constraints (module-internal normalization)
+
+6. **Storage accounts: ≤24 chars, lowercase alphanumeric, no hyphens, globally
+   unique.** The standard `{org}-{project}-{env}-{component}` scheme does not fit —
+   modules creating storage accounts compress deterministically
+   (strip hyphens, truncate, hash suffix) and document it.
+7. Key Vault names ≤24 chars, globally unique. Same normalization.
+
+## Resource groups
+
+8. One resource group per stack per environment (`ds-acme-prod-network`,
+   `ds-acme-prod-platform`) — the RG is the blast-radius and RBAC boundary,
+   mirroring the state split (`stack-architecture.mdc` §3). No "everything-prod" RG.
+9. RGs are created by the stack that owns them; nothing deploys into an RG it
+   didn't create (prevents invisible cross-stack coupling).
+
+## Service idioms
+
+10. "managed" flavor equivalence: postgres → Azure Database for PostgreSQL
+    Flexible Server, redis → Azure Cache for Redis, kafka → Event Hubs (Kafka
+    API) *only if the spec accepts protocol-compat limits, else vm/k8s flavor*,
+    object storage → Blob Storage, k8s → AKS.
+11. Region ("location") comes from the env root; paired-region DR is an ADR.
+
+## Kubernetes & secrets overlay
+
+12. Kubernetes cluster = **AKS**. Pod identity federation (`kubernetes.mdc` §1-2)
+    = **Azure AD Workload Identity** (OIDC issuer + federated credential per
+    service account) — not the older AAD Pod Identity, which is deprecated.
+13. Secrets Store CSI Driver provider (`secret-management.mdc` §2) = **Azure Key
+    Vault Provider for Secrets Store CSI Driver**. Secret manager = **Key Vault**,
+    `enable_rbac_authorization = true` per Identity §3.
+14. Cluster access (`kubernetes.mdc` §6) = **Entra ID RBAC**
+    (`azurerm_kubernetes_cluster.azure_active_directory_role_based_access_control`),
+    `local_account_disabled = true`.
+15. Log workspace (`observability.mdc` §1) = **Log Analytics Workspace**.
+    Diagnostics-only flow-log storage target (`observability.mdc` §4) = a
+    **Storage Account** provisioned solely for this purpose — never the same
+    account used for any product/artifact storage.

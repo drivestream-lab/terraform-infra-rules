@@ -1,0 +1,84 @@
+---
+description: Which infrastructure decisions require an ADR, the ADR template with per-env matrix, and the ADR/tfvars same-PR rule.
+alwaysApply: true
+---
+
+# Infrastructure ADRs
+
+**Rationale:** in IaC the *why* is what prevents 2am mistakes. tfvars say what runs;
+without the ADR nobody knows whether `flavor = "vm"` was a cost decision, a
+compliance requirement, or an accident — and nobody dares change it.
+
+## ADR triggers (mandatory)
+
+An ADR is required for any change to:
+
+1. Component **flavor** in any environment (k8s ↔ vm ↔ managed)
+2. Component **size_profile** in prod (stage/dev resizes: CHANGELOG line suffices)
+3. Managed service ↔ self-hosted for any data store
+4. Network topology: CIDR plan, new peering/private endpoints, anything public-facing
+5. State backend or stack split changes
+6. Major provider version upgrades (`provider-versioning.mdc` §5)
+7. Removing a `prevent_destroy` or renaming a stateful resource
+8. Any security-baseline exception (with expiry date)
+9. **Excluding or deviating from** a Tier 1 substrate module (virtual-network,
+   log-analytics, key-vault, aks/diagnostics storage — `spec-driven-infra.mdc`)
+   or any other constitution-default baseline. Wiring one of these at its
+   documented default is the opposite of ADR-worthy — see below.
+
+Not ADR-worthy: values already following an accepted ADR's matrix, patch bumps,
+new resources that are pure spec implementation with no alternatives weighed —
+**and wiring a Tier 1 substrate module at its documented default.** The absence
+of one is the anomaly requiring justification, not its presence. There is no
+"we need a VNet" ADR; there is a "we don't need a VNet because X" ADR, and it
+had better be a good X.
+
+## Override contract
+
+Any ADR that overrides a constitution default — not just a security-baseline
+exception — must:
+
+1. **Cite the specific product-spec requirement forcing it.** A cost ceiling
+   figure, an SLO target, a named compliance constraint. "We prefer X" is not a
+   requirement; it fails review. "Our cost ceiling of $Y/month makes the default
+   unaffordable" is.
+2. **Carry a review/expiry date**, after which the deviation is re-justified
+   against current spec requirements or reverted. Permanent, un-reviewed
+   overrides don't exist — the world the ADR was written for changes.
+
+## Template (`docs/specification/adr/NNNN-<slug>.md`)
+
+```markdown
+# ADR-NNNN: <decision>
+Status: Proposed | Accepted | Superseded by ADR-MMMM
+Date: YYYY-MM-DD    Deciders: <names>
+
+## Context
+<constraint driving the decision: cost ceiling, SLO, ops capacity, compliance>
+
+## Options considered
+| Option | Cost/mo (est.) | Ops burden | Risk | Notes |
+|---|---|---|---|---|
+
+## Decision — per-environment matrix
+| Component | dev | stage | uat | prod |
+|---|---|---|---|---|
+| kafka | k8s / s | k8s / s | k8s / m | vm / l |
+
+## Consequences
+<migration path, rollback story, cost delta, what becomes harder>
+```
+
+## Rules
+
+1. **Skills and agents propose, humans accept.** Generated ADRs are born
+   `Status: Proposed` with the options table filled in (including cost estimates);
+   a human fills gaps, decides, and flips to Accepted.
+2. **ADR and the tfvars change land in the same PR.** An accepted ADR with no
+   implementation, or a flavor change with no ADR, both fail review. The policy
+   gate enforces the second half: a plan diff touching flavor/size without an ADR
+   reference in the PR fails.
+3. **ADRs are append-only.** Wrong decisions get superseded, never edited — the
+   history *is* the value.
+4. ADR-0001 (environment topology) is generated at scaffold time from the
+   cookiecutter answers and must be reviewed → Accepted before the first apply.

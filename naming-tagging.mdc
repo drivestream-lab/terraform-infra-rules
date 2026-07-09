@@ -1,0 +1,53 @@
+---
+description: Resource naming scheme and mandatory tags for cost attribution, ownership, and drift audits.
+globs: **/*.tf
+alwaysApply: false
+---
+
+# Naming & Tagging
+
+**Rationale:** tags are the only lever for cost attribution and "who owns this"
+during an incident. Naming is the only lever for finding a resource in a console
+at 2am. Both are impossible to retrofit at scale.
+
+## Naming
+
+1. Scheme: `{org}-{project}-{env}-{component}[-{qualifier}]`, lowercase, hyphenated.
+   Example: `ds-acme-prod-kafka-broker`.
+2. Build names in one `locals` block per root — never inline string interpolation
+   scattered through resources:
+
+```hcl
+locals {
+  name_prefix = "${var.org}-${var.project}-${var.environment}"
+  tags = merge(var.default_tags, {
+    environment = var.environment
+    project     = var.project
+  })
+}
+```
+
+3. Respect provider-specific constraints via the cloud overlay rules (`aws.mdc`,
+   `azure.mdc`) — e.g. Azure storage accounts (≤24 chars, no hyphens), S3 global
+   uniqueness. Modules that create such resources must normalize names internally
+   and document it.
+4. **Never rename a live resource casually** — for most providers a name change is
+   destroy/recreate. Renames of stateful resources are ADR triggers.
+
+## Mandatory tags (every taggable resource)
+
+| Tag | Example | Consumer |
+|---|---|---|
+| `environment` | `prod` | Everyone |
+| `project` | `acme-core` | Cost reports |
+| `client` | `acme` | Multi-tenant cost split |
+| `owner` | `platform-team` | Incident routing |
+| `cost_center` | `cc-4711` | Finance |
+| `managed_by` | `terraform` | Drift audits — untagged = clickops suspect |
+| `stack` | `envs/prod` | Locating the owning state |
+
+5. Apply tags centrally — provider `default_tags` on AWS, a merged `local.tags`
+   passed to every module elsewhere. A resource missing mandatory tags fails the
+   policy gate (`policy-as-code.mdc`), not code review.
+6. Tag **values** come from variables; tag **keys** are fixed by this rule. Do not
+   invent per-repo tag schemas.

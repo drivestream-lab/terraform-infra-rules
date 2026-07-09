@@ -1,0 +1,73 @@
+---
+description: How rego policies mirror these rules — the executable subset of the constitution.
+globs: policies/**
+alwaysApply: false
+---
+
+# Policy as Code
+
+**Rationale:** prose rules are advisory; policies evaluated against plan JSON are
+deterministic. Every rule in this repo that *can* be machine-checked *is* — a
+violation becomes a gate failure, not a review comment someone can miss.
+
+## Structure
+
+Policies ship **in this repo** under `policies/`, versioned with the prose they
+enforce. Consumers get both through the same submodule pin — rules and their
+enforcement can never drift apart.
+
+```
+policies/
+  common/
+    exceptions.rego      # shared exception-declaration helper (rule 4 below)
+    tagging.rego         # naming-tagging.mdc "Mandatory tags"
+    security.rego        # security-baseline.mdc §3,4,5 (§6,9 not yet covered)
+    flavors.rego         # deployment-flavors.mdc contract + §2
+    lifecycle.rego       # plan-apply-workflow.mdc §5 (§4 not plan-JSON-checkable)
+  aws/                   # aws.mdc-specific checks (none shipped yet)
+  azure/
+    aks.rego              # kubernetes.mdc + azure.mdc §12-14
+    naming.rego           # naming-tagging.mdc §1 + azure.mdc §6-7
+```
+
+## Rules
+
+1. **Every policy names its source rule** in the deny message, with an id:
+
+```rego
+package terraform.security
+
+deny contains msg if {
+  some rc in input.resource_changes
+  rc.change.after.public_network_access_enabled == true
+  not exception_declared(rc.address)
+  msg := sprintf(
+    "[SEC-04] %s enables public network access (security-baseline.mdc §4)",
+    [rc.address],
+  )
+}
+```
+
+2. Policies evaluate **plan JSON** (`terraform show -json`), not source files —
+   the diff is the truth, source scanning is gate 4's job.
+3. **Severity is binary at the gate.** deny fails; warn prints. Anything worth a
+   `warn` for three releases either becomes a deny or gets deleted.
+4. **Exceptions are declared in code, not in the policy.** A documented escape
+   (e.g. the spec-declared public ingress) is expressed via a resource-level
+   marker the policy checks, referenced to an ADR with expiry. Editing the policy
+   to unblock one repo is forbidden.
+
+   The marker is a tag, checked by `policies/common/exceptions.rego`:
+
+```hcl
+tags = merge(local.tags, {
+  "policy_exception_SEC-03" = "ADR-0012;expires=2026-12-31"
+})
+```
+
+   An expired exception denies exactly as if it never existed — there is no
+   permanent-exception path (`infra-adr.mdc` "Override contract").
+5. Changing a policy is a rules-repo release like any other: PR, semver
+   (tightening = major — consumers may start failing), CHANGELOG.
+6. New prose rules land with their rego mirror in the same PR, or with an explicit
+   "not machine-checkable because…" note in the rule file.

@@ -1,0 +1,55 @@
+---
+description: Spec-driven infrastructure delivery — where truth lives and the workflow from spec to plan.
+alwaysApply: true
+---
+
+# Spec-Driven Infrastructure
+
+## Sources of truth (in order of authority)
+
+| Artifact | Location (consumer repo) | Answers |
+|---|---|---|
+| Infra spec | `docs/specification/product/` | What must exist: components, topology, SLOs, cost ceiling |
+| ADRs | `docs/specification/adr/` | Why it exists in this shape (flavor, sizing, managed vs self-hosted) |
+| tfvars | `envs/<env>/terraform.tfvars` | The machine-readable per-env decision |
+| As-built | `docs/specification/as-built/` | What is live today |
+
+Code is derived. When code and spec disagree, the spec wins; if the spec is wrong,
+fix the spec first — in the same PR.
+
+## Workflow
+
+```
+spec (product)          # capacity, components, per-env matrix, constraints
+  → ADR (proposed)      # flavor/size/managed choices, options considered
+    → tfvars + modules  # implement the accepted ADR
+      → make check      # fmt, validate, lint, policy
+        → make plan     # speculative plan; JSON artifact for review
+          → PR          # plan summary + ADR + as-built update together
+```
+
+## A valid infra spec contains
+
+- Component list with per-environment matrix (flavor, size_profile, count)
+- Network topology: VNets/VPCs, CIDR plan, ingress/egress rules, private endpoints
+- Data classification per store (drives encryption/access decisions)
+- SLO targets that affect infra, **including RPO/RTO stated explicitly per
+  stateful resource** — "no backup, risk accepted" is a valid answer; no
+  statement at all is not. Backup/DR is a required *decision*, never a
+  constitution-mandated *default* — cost and risk tolerance are the client's
+  call, not this repo's (`infra-adr.mdc` "Override contract" does not apply
+  here since there is no constitution default to override in the first place)
+- Cost ceiling per environment
+
+A spec without a per-env matrix is incomplete — do not start coding; ask for the matrix.
+
+## Rules
+
+1. Never invent topology. If the spec doesn't say which flavor or size, that's an
+   ADR trigger (`infra-adr.mdc`), not a default to assume.
+2. Every behavior change updates `as-built/` in the **same PR**.
+3. Plan output is compared against the spec before PR: every resource in the plan
+   must trace to a spec component; anything unaccounted for is a finding.
+4. Backup/DR posture is a required field per stateful resource, not an assumed
+   default. Silence on it is an incomplete spec, exactly like a missing per-env
+   matrix — flag it, don't assume a value.

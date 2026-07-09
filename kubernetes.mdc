@@ -1,0 +1,60 @@
+---
+description: Cloud-neutral Kubernetes patterns — pod identity, secrets injection, network policy, cluster access. Applies to any module running a k8s flavor or a managed Kubernetes cluster.
+globs: **/*.tf
+alwaysApply: false
+---
+
+# Kubernetes Baseline
+
+**Rationale:** a managed Kubernetes cluster is only as secure as its identity and
+secrets model. These rules are cloud-neutral — the specific product each maps to
+(AKS, EKS, GKE) lives in the matching cloud overlay (`azure.mdc`, `aws.mdc`).
+
+## Pod identity
+
+1. Pods authenticate to cloud services via **federated OIDC identity** between the
+   Kubernetes service account and the cloud's IAM system — never via static
+   credentials mounted into the pod or baked into a container image.
+2. The cluster's OIDC issuer is enabled unconditionally; it is what makes pod
+   identity federation possible at all, not an opt-in.
+
+## Secrets
+
+3. Secrets are injected into pods exclusively via a **Secrets Store CSI Driver**
+   backed by the cloud's native secret manager. Kubernetes `Secret` objects
+   created by Terraform, and raw environment variables sourced from `.tf`/`.tfvars`,
+   both fail the policy gate (`secret-management.mdc`).
+
+## Network policy
+
+4. A network policy engine is enabled on every cluster from creation — not added
+   later. Default is deny-between-namespaces unless explicitly allowed; "flat"
+   pod networking (any pod reaches any pod) fails the policy gate.
+
+## Pod security
+
+5. Clusters enforce the Kubernetes **Restricted** Pod Security Standard by default
+   at the namespace level. Workloads needing an exception (privileged, hostPath,
+   etc.) declare it explicitly in the namespace manifest — never a silent
+   cluster-wide relaxation.
+
+## Cluster access
+
+6. No static or local cluster-admin credentials. All API/`kubectl` access is
+   federated through the cloud's IAM/identity provider — the same identity
+   federation used for CI (`plan-apply-workflow.mdc`), not a separate credential
+   class.
+
+## Node pools
+
+7. System/control-plane-adjacent workloads and application workloads run in
+   separate node pools or node groups. A workload never schedules onto whatever
+   pool happens to host cluster system components.
+
+## Enforcement
+
+Rules 1-4 and 6 have a matching rego policy id under `policies/azure/aks.rego`
+(shipped). The AWS equivalent (`policies/aws/eks.rego`) does not exist yet — until
+it ships, these rules on EKS are plan-review only, per `policy-as-code.mdc`'s own
+rule that prose without a rego mirror must say so. Rules 5 and 7 have no rego
+policy on either cloud yet.

@@ -1,0 +1,48 @@
+---
+description: Environment parity model and promotion discipline — same code everywhere, differences are data.
+globs: envs/**
+alwaysApply: false
+---
+
+# Environments & Promotion
+
+**Rationale (failure mode: environment forks):** the moment stage and prod are
+different *code* instead of different *data*, promotion stops being a test — every
+prod deploy becomes a first deploy. Parity is what makes stage results predictive.
+
+## The parity model
+
+- **Same modules, same versions target, everywhere.** dev/stage/uat/prod call the
+  identical module set; only `terraform.tfvars` differs (flavor, size_profile,
+  counts, CIDRs).
+- Divergence like "Kafka on k8s in stage but VMs in prod" is expressed through the
+  **flavor contract** (`deployment-flavors.mdc`) — a tfvars value selecting a code
+  path that exists and is tested in the shared module, not a fork of the module.
+
+```hcl
+# envs/stage/terraform.tfvars
+kafka = { flavor = "k8s", size = "s" }
+# envs/prod/terraform.tfvars
+kafka = { flavor = "vm",  size = "l" }
+```
+
+## Rules
+
+1. **No env conditionals in module code.** `var.environment == "prod" ? ... : ...`
+   inside a module is a fork wearing a costume. Modules take behavior as typed
+   inputs; envs choose values.
+2. **Promotion order is dev → stage → uat → prod**, expressed as module version
+   pins per env. During a rollout, envs may pin different module versions — that
+   staggering is the *mechanism* of promotion, and it must converge: an env more
+   than one release behind prod's target is a finding.
+3. **Prod changes must have run in stage first.** The PR to bump prod's pin links
+   the stage PR and its plan/apply result. Exceptions (hotfix straight to prod)
+   require incident reference.
+4. **Every env difference is justified.** flavor/size deltas trace to the ADR
+   env-matrix (`infra-adr.mdc`). A prod/stage delta with no ADR line fails review —
+   either document it or eliminate it.
+5. Ephemeral/dev environments may relax **size** (always `s`) and **log
+   retention duration** (`observability.mdc`), never **security baseline** or
+   **logging existence** — a dev bucket is still private, a dev DB still
+   encrypted, a dev resource's diagnostics are still wired even if kept for
+   only 2 days instead of prod's 7. Attackers pivot from dev.

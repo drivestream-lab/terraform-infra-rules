@@ -1,0 +1,14 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [develop, main]
+
+jobs:
+  mdc-boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: MDC constitution boundary
+        run: bash scripts/check_mdc_boundary.sh

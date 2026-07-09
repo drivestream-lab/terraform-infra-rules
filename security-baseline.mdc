@@ -1,0 +1,66 @@
+---
+description: Non-negotiable security defaults — encryption, network exposure, IAM, secrets. Applies to every resource in every environment.
+globs: **/*.tf
+alwaysApply: false
+---
+
+# Security Baseline
+
+**Rationale:** cloud primitives ship insecure by default — public buckets, open
+security groups, unencrypted disks. This rule inverts the defaults. It applies to
+**all environments**: attackers pivot from dev.
+
+## Encryption
+
+1. Encryption at rest on every data store, disk, queue, and backup. Prefer
+   customer-managed keys for anything holding client data; document the key
+   hierarchy in the spec.
+2. TLS ≥ 1.2 on every endpoint. Plain-HTTP listeners exist only as redirects.
+
+## Network exposure
+
+3. **Default deny.** No `0.0.0.0/0` (or `::/0`) ingress on any port, ever, except
+   ports 80/443 on resources explicitly declared as public in the spec.
+4. Data stores are never publicly addressable — private endpoints / private subnets
+   only. `publicly_accessible = false`, `public_network_access_enabled = false` —
+   set explicitly, don't rely on provider defaults that change between versions.
+5. Storage: block public access at the account/bucket level, not per object.
+
+## Identity & IAM
+
+6. **Least privilege, no wildcards.** `Action: "*"` or `Resource: "*"` in an IAM
+   policy fails the policy gate. Scope to the specific actions and ARNs/scopes the
+   workload needs.
+7. Workloads authenticate with **workload identity** (managed identity, IRSA/OIDC) —
+   never long-lived access keys or SP secrets in config.
+8. CI authenticates to clouds via **OIDC federation** — no cloud credentials stored
+   in CI secrets. Plan credentials are read-only (`plan-apply-workflow.mdc`).
+
+## Secrets
+
+9. **No secret values in `.tf`, `.tfvars`, or module outputs.** Pass references:
+
+```hcl
+# CORRECT — reference, resolved by the workload at runtime
+variable "db_password_secret_id" {
+  type        = string
+  description = "Key Vault / Secrets Manager id holding the DB password."
+}
+
+# INCORRECT — value transits plan, state, and CI logs
+variable "db_password" { type = string, sensitive = true }
+```
+
+`sensitive = true` hides values from console output — it does **not** keep them
+out of state. Reference-passing does.
+
+10. Where a provider forces a secret into state (e.g. initial admin passwords),
+    generate it with `random_password`, store it into the vault in the same
+    config, rotate it out-of-band, and treat the state backend as a vault
+    (`state-and-backends.mdc`).
+
+## Enforcement
+
+Every numbered rule above has a matching rego policy id (`policy-as-code.mdc`).
+Violations are gate failures, not review comments. Exceptions require an ADR with
+an expiry date — permanent exceptions don't exist.

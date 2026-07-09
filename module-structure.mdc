@@ -1,0 +1,66 @@
+---
+description: Module anatomy, composition rules, and safe refactoring for Terraform modules.
+globs: modules/**/*.tf
+alwaysApply: false
+---
+
+# Module Structure
+
+**Rationale:** modules are the unit of reuse and review. Uniform anatomy means any
+engineer or agent can open any module and know where everything is.
+
+## Anatomy (mandatory)
+
+```
+modules/<name>/
+  main.tf         # resources; split into <topic>.tf files if > ~200 lines
+  variables.tf    # all inputs (see variables-outputs.mdc)
+  outputs.tf      # all outputs
+  versions.tf     # required_version + required_providers ONLY
+  README.md       # purpose, inputs/outputs table, example call
+```
+
+## Rules
+
+1. **No `provider` blocks inside modules.** Modules declare requirements in
+   `versions.tf`; roots configure providers. Provider blocks in modules make them
+   uncomposable and break `for_each` over module calls.
+
+```hcl
+# CORRECT — modules/kafka/versions.tf
+terraform {
+  required_version = ">= 1.7"
+  required_providers {
+    azurerm = { source = "hashicorp/azurerm", version = ">= 4.0" }
+  }
+}
+
+# INCORRECT — provider config inside a module
+provider "azurerm" { features {} }
+```
+
+2. **No remote-state reads inside modules.** `terraform_remote_state` in a module
+   hard-couples it to a specific consumer's layout. Take dependencies as input
+   variables; let the root wire them.
+3. **Single responsibility.** A module owns one component (kafka, postgres, network) —
+   not "all of staging". If the README needs "and", split it.
+4. **Don't wrap single resources without adding policy.** A module that passes
+   through one resource's arguments 1:1 is indirection, not abstraction. A wrapper
+   is justified only when it bakes in the security baseline, naming, or flavor logic.
+5. **`for_each` over `count` for collections** — keys are stable identities; count
+   indices reshuffle state on reorder and cause destroy/recreate storms.
+6. **Refactor with `moved` blocks, never state surgery:**
+
+```hcl
+moved {
+  from = azurerm_kubernetes_cluster.kafka
+  to   = module.kafka_k8s.azurerm_kubernetes_cluster.this
+}
+```
+
+Ship the `moved` block in the same PR as the refactor; the plan must show
+zero destroy/create for pure renames.
+
+7. **Consume shared modules by pinned ref**
+   (`?ref=v1.4.0`), never by branch. Bumping a module version follows the same
+   CHANGELOG-first discipline as bumping this rules repo.
